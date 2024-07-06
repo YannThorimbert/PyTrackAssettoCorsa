@@ -48,37 +48,84 @@ def autoadapt_resolution():
     e_res.set_value(new_res)
     track.refresh_if_needed(force=True)
 
-def make_land_triangles(land_points, lane_points, profile, flip_faces=False, cliffs=None):
+# def make_land_triangles(land_points, lane_points, profile, flip_faces=False, cliffs=None):
+#     assert len(profile) == len(lane_points)
+#     triangles = []
+#     last_land_point = None
+#     for i in range(len(lane_points)+1):
+#         alt_q = profile[i%len(lane_points)][1]
+#         q = lane_points[i%len(lane_points)]
+#         alt_r = profile[(i+1)%len(lane_points)][1]
+#         r = lane_points[(i+1)%len(lane_points)]
+#         _, s = track.closest_point(q, float("inf"), candidates=land_points)
+#         # distances = [p.distance_to(q) for p in land_points]
+#         if cliffs is None:
+#             alt_land = (alt_q+alt_r)/2
+#         else:
+#             alt_land = cliffs #otherwise, user choose altitude of cliff bottom
+#         if flip_faces:
+#             triangles.append((tri(q,alt_q), tri(s,alt_land), tri(r,alt_r)))
+#         else:
+#             triangles.append((tri(q,alt_q), tri(r,alt_r), tri(s,alt_land)))
+#         if last_land_point and s != last_land_point:
+#             if cliffs is None:
+#                 alt_land = alt_q
+#             if flip_faces:
+#                 triangles.append((tri(q,alt_q), tri(last_land_point,alt_land), tri(s,alt_land)))
+#             else:
+#                 triangles.append((tri(q,alt_q), tri(s,alt_land), tri(last_land_point,alt_land)))
+#         last_land_point = s
+#     return triangles
+
+def make_land_triangles(land_points, lane_points, profile, flip_faces=False, cliffs=-1):
     assert len(profile) == len(lane_points)
+    if cliffs < 0:
+        #then we have to compute the height of land points in order to have a smooth surface
+        new_land_pts = {}
+        for i,p in enumerate(lane_points):
+            q = min(land_points, key=lambda q: dist_sqr(p,q))
+            #slow version
+            if q in new_land_pts:
+                new_land_pts[q].append(i)
+            else:
+                new_land_pts[q] = [i]
+            # new_land_pts.setdefault(q, []).append(p) #faster ?
+        avg_land_pts = []
+        for q, indices in new_land_pts.items():
+            tot_alt = 0
+            tot_fac = 0
+            for i in indices:
+                d = dist(q, p)
+                factor = 1 / d
+                tot_fac += factor
+                tot_alt += profile[i][1] * factor
+            z = tot_alt/tot_fac
+            avg_land_pts.append((q[0], q[1], z))
+        land_points = avg_land_pts
     triangles = []
-    last_land_point = None
+    previous_s = None
     for i in range(len(lane_points)+1):
         alt_q = profile[i%len(lane_points)][1]
         q = lane_points[i%len(lane_points)]
         alt_r = profile[(i+1)%len(lane_points)][1]
         r = lane_points[(i+1)%len(lane_points)]
-        _, s = track.closest_point(q, float("inf"), candidates=land_points)
+        k, s = track.closest_point(q, float("inf"), candidates=land_points)
         # distances = [p.distance_to(q) for p in land_points]
-        if cliffs is None:
-            alt_land = (alt_q+alt_r)/2
+        if cliffs < 0:
+            alt_land = land_points[k][2]
         else:
             alt_land = cliffs #otherwise, user choose altitude of cliff bottom
+        s = tri(s, alt_land)
         if flip_faces:
-            triangles.append((tri(q,alt_q), tri(s,alt_land), tri(r,alt_r)))
+            triangles.append((tri(q,alt_q), s, tri(r,alt_r)))
         else:
-            triangles.append((tri(q,alt_q), tri(r,alt_r), tri(s,alt_land)))
-        if last_land_point and s != last_land_point:
-            if cliffs is None:
-                alt_land = alt_q
+            triangles.append((tri(q,alt_q), tri(r,alt_r), s))
+        if previous_s and s != previous_s:
             if flip_faces:
-                triangles.append((tri(q,alt_q), tri(last_land_point,alt_land), tri(s,alt_land)))
+                triangles.append((tri(q,alt_q), previous_s, tri(s,alt_land)))
             else:
-                triangles.append((tri(q,alt_q), tri(s,alt_land), tri(last_land_point,alt_land)))
-        last_land_point = s
-    # if flip_faces:
-    #     triangles.append((tri(q,alt_q), tri(last_land_point), tri(s)))
-    # else:
-    #     triangles.append((tri(q,alt_q), tri(s), tri(last_land_point)))
+                triangles.append((tri(q,alt_q), tri(s,alt_land), previous_s))
+        previous_s = s
     return triangles
 
 def write_triangles(triangles, name):
@@ -172,6 +219,8 @@ class Track:
         self.turns_R:list[int] = []
         self.added_turns_L:list[int] = []
         self.added_turns_R:list[int] = []
+        self.added_left_land = []
+        self.added_right_land = []
         #
         self.close_loop = True
         self.modified_point = None
@@ -198,7 +247,6 @@ class Track:
             self.params = [
                 e_avg_land.get_value(),
                 e_width_land.get_value(),
-                e_thresh_land.get_value(),
                 e_cliff.get_value(),
                 e_fill_visual.get_value(),
                 e_show_land.get_value(),
@@ -206,7 +254,10 @@ class Track:
                 e_show_kerbs.get_value(),
                 e_res.get_value(),
                 e_width.get_value(),
-                e_auto_kerbs_sensitivity.get_value()
+                e_auto_kerbs_sensitivity.get_value(),
+                e_land_res.get_value(),
+                e_autoland_m.get_value(),
+                e_autoland_M.get_value()
             ]
             data_to_save = {attr: getattr(self, attr) for attr in attributes}
             with open(fn, 'wb') as f:
@@ -226,18 +277,19 @@ class Track:
         try: #new file format
             e_avg_land.set_value(self.params[0])
             e_width_land.set_value(self.params[1])
-            e_thresh_land.set_value(self.params[2])
-            e_cliff.set_value(self.params[3])
-            e_fill_visual.set_value(self.params[4])
-            e_show_land.set_value(self.params[5])
-            e_show_alt.set_value(self.params[6])
-            e_show_kerbs.set_value(self.params[7])
-            e_res.set_value(self.params[8])
-            e_width.set_value(self.params[9])
-            e_auto_kerbs_sensitivity.set_value(self.params[10])
+            e_cliff.set_value(self.params[2])
+            e_fill_visual.set_value(self.params[3])
+            e_show_land.set_value(self.params[4])
+            e_show_alt.set_value(self.params[5])
+            e_show_kerbs.set_value(self.params[6])
+            e_res.set_value(self.params[7])
+            e_width.set_value(self.params[8])
+            e_auto_kerbs_sensitivity.set_value(self.params[9])
+            e_land_res.set_value(self.params[10])
+            e_autoland_m.set_value(self.params[11])
+            e_autoland_M.set_value(self.params[12])
         except:
             print("Old file format, some parameters may not be loaded")
-        # self.recompute_kerbs()
             
     def insert_profile_point(self, x, profile):
         for i in range(len(profile)-1):
@@ -361,28 +413,29 @@ class Track:
             f.write(f"endsolid {name}\n")
 
     def write_all_stls(self):
+        tp.Text("Refresh Land", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
+        self.refresh_if_needed(force=True, also_force_land=True)
         tp.Text("Writing road", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
-        self.refresh_if_needed(force=True)
         self.write_stl("1ROAD1", self.right_lane, self.left_lane)
+        # smooth_right_land = self.build_lane(self.left_lane, 2*self.width, -90)
+        # smooth_left_land = self.build_lane(self.right_lane, 2*self.width, 90)
+        # self.write_stl("1GRASS_R", smooth_left_land, self.right_lane)
+        # self.write_stl("1GRASS_L", self.left_lane, smooth_right_land)
         #########################################
         tp.Text("Smoothing profile", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
         profile_L = smooth_profile(self.profile_L, len(self.left_lane))
-        # build_land_points()
         cliff_z = e_cliff.get_value()
-        if cliff_z < 0:
-            cliff_z = None
         tp.Text("Making Grass0 triangles", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
-        triangles = make_land_triangles(self.left_land, self.left_lane, profile_L, cliffs=cliff_z)
+        triangles = make_land_triangles(self.left_land, self.left_lane, profile_L,flip_faces=False, cliffs=cliff_z)
         tp.Text("Writing Grass0", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
-        write_triangles(triangles, "1GRASS0")
+        write_triangles(triangles, "1GRASS0") #left
         #
-        tp.Text("Writing Grass1", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
         profile_R = smooth_profile(self.profile_R, len(self.right_lane))
+        tp.Text("Making Grass1 triangles", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
         triangles = make_land_triangles(self.right_land, self.right_lane, profile_R, flip_faces=True, cliffs=cliff_z)
-        write_triangles(triangles, "1GRASS1")
-        # self.write_stl("land_left", self.right_land, self.right_lane)
-        # self.write_stl("land_right", self.left_lane, self.left_land)
-        # self.write_stl("kerbs_right", self.left_lane, self.left_land)
+        tp.Text("Writing Grass1", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
+        write_triangles(triangles, "1GRASS1") #right
+        ########### 
         tp.Text("Writing Kerbs", 40, (0,0,0)).center_on(screen).draw_and_display_rect((255,)*3)
         self.write_kerbs_stl("1KERB_L", -90)
         self.write_kerbs_stl("1KERB_R", 90)
@@ -397,13 +450,13 @@ class Track:
         # ddz = 0
         if "L" in name:
             lane = self.left_lane
-            turns = self.turns_L + self.added_turns_L
+            turns = self.fill_kerbs_holes(self.turns_L + self.added_turns_L)
             flip_faces = False
             profile = smooth_profile(self.profile_L, len(self.left_lane))
             profile2 = smooth_profile(self.profile_R, len(self.right_lane))
         else:
             lane = self.right_lane
-            turns = self.turns_R + self.added_turns_R
+            turns = self.fill_kerbs_holes(self.turns_R + self.added_turns_R)
             flip_faces = True
             profile = smooth_profile(self.profile_R, len(self.right_lane))
             profile2 = smooth_profile(self.profile_L, len(self.left_lane))
@@ -436,6 +489,26 @@ class Track:
             if os.path.exists(name+".stl"):
                 os.remove(name+".stl")
 
+    def fill_kerbs_holes(self, turns:list[int]) -> list[int]:
+        serie_tolerance = 5 #consecutive holes in the kerbs that can be filled
+        serie = 0
+        last_i = -2
+        turns.sort()
+        new_turns = []
+        for i in turns:
+            new_turns.append(i)
+            gap = i - last_i
+            if gap == 0:
+                serie += 1
+            else:
+                if gap < serie_tolerance:
+                    for j in range(1, gap):
+                        new_turns.append((last_i+j)%len(self.left_lane))
+                    serie += gap
+                else:
+                    serie = 0
+            last_i = i
+        return new_turns
 
     def detect_kerbs(self):
         turnsL, turnsR = [], []
@@ -470,34 +543,6 @@ class Track:
             #     last_turn = None
         return turnsL, turnsR
     
-    def get_land_points(self, land_points) -> list[tuple]:
-        if e_avg_land.get_value() < 10:
-            pts = land_points
-        else:
-            pts = avg(land_points)
-        # return pts
-        # print("***", len(pts), LAND_LANE_FACTOR * self.width)
-        track_pts = self.left_lane + self.right_lane + self.points
-        valid_pts = []
-        parameter = self.width * 4 * e_thresh_land.get_value() / 100
-        for p in pts:
-            coord = min(track_pts, key=lambda q: dist_sqr(p, q))
-            d = dist(p, coord)
-            if d > parameter:#LAND_LANE_FACTOR * self.width:
-                valid_pts.append(p)
-        print(len(valid_pts))
-        return valid_pts
-        # 
-        # repopulated = []
-        # for i in range(len(decimated)-1):
-        #     repopulated.append(decimated[i])
-        #     next_point = decimated[i+1]
-        #     p = V2(decimated[i])
-        #     q = V2(next_point)
-        #     delta = (q-p)/2
-        #     repopulated.append(tuple(p+delta))
-        # return repopulated
-        # return get_spline(repopulated, True, 1*len(repopulated))
         
     def get_raw_or_spline_point(self, ref_point):
         i, coord = track.closest_point(ref_point, MAGNET1)
@@ -527,9 +572,10 @@ class Track:
         return len(self.left_lane)-1
     
     def refresh_land(self):
-        self.refresh_land_light()
-        self.right_land = self.get_land_points(self.right_land)
-        self.left_land = self.get_land_points(self.left_land)
+        n = e_land_res.get_value()
+        self.left_land, self.right_land = spawn_valid_land_points(n, int(n*H/W))
+        self.left_land += self.added_left_land
+        self.right_land += self.added_right_land
 
     def refresh_land_light(self):
         f = e_width_land.get_value() / 100 * 10
@@ -539,46 +585,56 @@ class Track:
     
 track = Track()
 
+def spawn_valid_land_points(res_w, res_h):
+    # m = track.width * 3
+    m = e_autoland_m.get_value()
+    M = e_autoland_M.get_value()
+    valid_points_L = []
+    valid_points_R = []
+    candidates = track.left_lane+track.right_lane
+    if not candidates:
+        return valid_points_L, valid_points_R
+    for x in np.linspace(0, W, res_w):
+        for y in np.linspace(0, H, res_h):
+            p = V2(x,y)
+            coord = min(candidates, key=lambda q: p.distance_squared_to(q))
+            d = p.distance_to(coord)
+            if m < d < M:
+                if coord in track.left_lane:
+                    valid_points_L.append(tuple(p))
+                    col = (255,0,0)
+                elif coord in track.right_lane:
+                    valid_points_R.append(tuple(p))
+                    col = (0,0,255)
+    return valid_points_L, valid_points_R
+
 # def spawn_valid_land_points(res_w, res_h):
-#     # if tp.get_current_loop().iteration%30 != 0:
-#     #     return
-#     valid_points = []
-#     for x in np.linspace(0, W, res_w):
-#         for y in np.linspace(0, H, res_h):
-#             p = V2(x,y)
-#             coord = min(track.left_lane+track.right_lane+track.points, key=lambda q: p.distance_squared_to(q))
-#             d = p.distance_to(coord)
-#             if track.width * 3 < d < track.width * 12:
-#                 valid_points.append(tuple(p))
-#                 # pygame.draw.circle(screen, (0,0,0), p, 3)
-#     return valid_points
+#     import random
+#     # m = track.width * 3
+#     m = e_autoland_m.get_value()
+#     M = e_autoland_M.get_value()
+#     valid_points_L = []
+#     valid_points_R = []
+#     candidates = track.left_lane+track.right_lane
+#     if not candidates:
+#         return valid_points_L, valid_points_R
+#     n = res_h * res_w
+#     for i in range(n):
+#         track_point = V2(random.choice(candidates))
+#         angle = random.uniform(0, 360)
+#         dist = random.uniform(m, M)
+#         p = track_point + V2(dist,0).rotate(angle)
+#         coord = min(candidates, key=lambda q: p.distance_squared_to(q))
+#         d = p.distance_to(coord)
+#         if m < d < M:
+#             if coord in track.left_lane:
+#                 valid_points_L.append(tuple(p))
+#                 col = (255,0,0)
+#             elif coord in track.right_lane:
+#                 valid_points_R.append(tuple(p))
+#                 col = (0,0,255)
+#     return valid_points_L, valid_points_R
 
-# def build_land_points():
-#     valid_points = spawn_valid_land_points(30,20)
-#     track.left_land = valid_points
-#     track.right_land = valid_points
-
-
-def simulate_land_points():
-    import random
-    for i in range(len(track.left_land)):
-        p = V2(track.left_land[i])
-        d,q = min([(dist(p, q), q) for q in track.left_lane])
-        force = 100 / (d+1e-3)
-        if d < 1e-6:
-            p += V2(random.uniform(-1,1), random.uniform(-1,1))
-        else:
-            p += (p-q).normalize() * force
-        track.left_land[i] = (p.x, p.y)
-    for i in range(len(track.right_land)):
-        p = V2(track.right_land[i])
-        d,q = min([(dist(p, q), q) for q in track.right_land])
-        force = 100 / (d+1e-3)
-        if d < 1e-6:
-            p += V2(random.uniform(-1,1), random.uniform(-1,1))
-        else:
-            p += (p-q).normalize() * force
-        track.right_land[i] = (p.x, p.y)
 
 def my_stuff(): #do what you want with the display like in any pygame code you write
     keys = pygame.key.get_pressed()
@@ -619,8 +675,6 @@ def draw_all():
     if e_show_land.get_value():
         track.draw_polygon(track.left_land, (0,200,0), 2, fill_color)
         fill_color_right_lane = (0,200,0)
-        # for i_p, point in enumerate(track.get_land_points(track.left_land)):
-        #     pygame.draw.circle(screen, (0,0,0), point, 6)
     else:
         fill_color_right_lane = (255,255,255)
     track.draw_polygon(track.left_lane, (200,200,200), 1, fill_color)
@@ -713,7 +767,12 @@ def draw_all():
     else:
         pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
     # spawn_valid_land_points(30,20)
+    for i_p, point in enumerate(track.left_land+track.added_left_land):
+        pygame.draw.circle(screen, (0,0,255), point, 4)
+    for i_p, point in enumerate(track.right_land+track.added_right_land):
+        pygame.draw.circle(screen, (255,0,0), point, 4)
     e_alt.draw()
+
 
 
 # def choose_alt(alt) -> int:
@@ -783,10 +842,9 @@ e_res.slider.dragger.at_drag = track.mark_refresh
 e_width = tp.SliderWithText("Track width", 1, 64, 16, 100)
 e_width.slider.dragger.at_drag = track.mark_refresh
 
-e_avg_land = tp.SliderWithText("Avg Land", 0, 200, 70, 200)
+e_avg_land = tp.SliderWithText("Avg Land", 0, 200, 70, 100)
 e_avg_land.slider.dragger.at_drag = track.mark_refresh
 
-e_thresh_land = tp.SliderWithText("Land Parameter", 0, 100, 51, 100)
 
 e_width_land = tp.SliderWithText("Land Width", 0, 100, 30, 100)
 e_width_land.slider.dragger.at_drag = track.mark_refresh
@@ -820,23 +878,34 @@ e_find_resolution.at_unclick = autoadapt_resolution
 e_recompute_kerbs = tp.Button("Autodetect kerbs\n(remove old ones)")
 e_recompute_kerbs.at_unclick = track.recompute_kerbs
 
-e_auto_kerbs_sensitivity = tp.SliderWithText("Sensitivity", 0, 100, 50, 100)
+e_auto_kerbs_sensitivity = tp.SliderWithText("Autokerbs\nsensitivity", 0, 100, 50, 100)
 
-e_box_track = tp.Box([e_res, e_width, e_find_resolution, e_recompute_kerbs, e_auto_kerbs_sensitivity])
-e_box_land = tp.Box([e_avg_land, e_thresh_land, e_width_land, e_cliff, e_refresh_land])
-e_box_draw = tp.Box([e_fill_visual, e_show_land, e_show_kerbs, e_show_alt])
-e_box_disk = tp.Box([e_savep, e_loadp, e_save])
+e_land_res = tp.SliderWithText("Land resolution", 10, 210, 80, 100)
+e_autoland_m = tp.SliderWithText("Autoland tolerance1", 0., 50., 10, 100)
+e_autoland_M = tp.SliderWithText("Autoland tolerance2", 0., 200., 30., 100)
+
+e_box_track = tp.TitleBox("Track",[e_res, e_find_resolution, e_width, e_auto_kerbs_sensitivity, e_recompute_kerbs])
+e_box_land = tp.TitleBox("Terrain",[e_avg_land, e_width_land, e_cliff, e_land_res, e_autoland_m, e_autoland_M, e_refresh_land])
+e_box_draw = tp.TitleBox("Display",[e_fill_visual, e_show_land, e_show_kerbs, e_show_alt])
+e_box_disk = tp.Group([e_savep, e_loadp, e_save])
 
 
+H_LAYOUT = True
 
+if H_LAYOUT:
+    e_group = tp.Box([e_box_track, e_box_land, e_box_draw, e_box_disk], sort_immediately=False)
+    e_group.sort_children("h")
+    e_group.stick_to("screen", "bottom", "bottom")
+else:
+    e_group = tp.Box([e_box_track, e_box_land, e_box_draw, tp.Line("h", 200), e_box_disk], sort_immediately=False)
+    e_group.sort_children("v")
+    e_group.stick_to("screen", "left", "left", (5,0))
 
-e_group = tp.Box([e_box_track, e_box_land, e_box_draw, e_box_disk], sort_immediately=False)
-e_group.sort_children("v")
 updater = e_group.get_updater()
-e_group.stick_to("screen", "left", "left", (5,0))
+
 
 track.refresh_if_needed(force=True)
-# track.load_from_disk("simple.track")
+track.load_from_disk("m92.track")
 track.refresh_if_needed(force=True)
 
 track.smoothed_profile_L = smooth_profile(track.profile_L, len(track.left_lane))
@@ -901,9 +970,14 @@ while playing:
                 track.width = e_width.get_value()
                 track.mark_refresh()
         elif e.type == pygame.KEYDOWN:
-            track.mark_refresh()
+            # track.mark_refresh()
             if e.key == pygame.K_SPACE:
-                track.close_loop = not track.close_loop
+                # track.close_loop = not track.close_loop
+                if pygame.constants.KMOD_CTRL & pygame.key.get_mods():
+                    track.added_left_land.append(pygame.mouse.get_pos())
+                else:
+                    track.added_right_land.append(pygame.mouse.get_pos())
+
             elif e.key == pygame.K_a or e.key == pygame.K_d:
                 i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1)
                 if i >= 0:
@@ -934,7 +1008,11 @@ while playing:
     pygame.display.flip()
 pygame.quit()
 
-#TODO: resolution auto en fonction de derive piste
+# TODO control que pas de trucs malsain
+# spawn point : checker que point pas DANS track... car besoind de tolerance faible !
+# ==> probleme pas bien posé. Pk ne pas vouloir toute petite bande de grass ?
+
+#TODO: allow use light land
 #TODO: enregistrer valeurs sliders
 #TODO: working zoom (pas toucher a track width, vraiment histoire de camera)
 #TODO: lancé de particles pour grass
