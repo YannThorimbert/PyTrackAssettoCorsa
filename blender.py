@@ -70,6 +70,22 @@ def save_as_fbx(filepath):
     except Exception as e:
         print(f"Failed to save FBX: {e}")
 
+def select_longest_edge(obj):
+    mesh = obj.data
+    longest_edge = None
+    max_length = 0.0
+    # Calculer la longueur de chaque arête
+    for edge in mesh.edges:
+        vert1 = mesh.vertices[edge.vertices[0]].co
+        vert2 = mesh.vertices[edge.vertices[1]].co
+        length = (vert1 - vert2).length
+        if length > max_length:
+            max_length = length
+            longest_edge = edge
+    # Sélectionner l'arête la plus longue
+    if longest_edge is not None:
+        longest_edge.select = True
+
 def fill_inside_mesh(obj_name, new_obj_name):
     # Assurer que l'objet existe et est un mesh
     obj = bpy.data.objects.get(obj_name)
@@ -85,7 +101,8 @@ def fill_inside_mesh(obj_name, new_obj_name):
         # Mettre à jour la scène
         bpy.ops.object.mode_set(mode='OBJECT')
         # Sélectionner la première arête
-        obj.data.edges[0].select = True
+        # obj.data.edges[edge_number].select = True
+        select_longest_edge(obj)
         # Retourner en mode édition
         bpy.ops.object.mode_set(mode='EDIT')
         # Sélectionner la boucle d'arêtes
@@ -103,21 +120,62 @@ def fill_inside_mesh(obj_name, new_obj_name):
     else:
         print("L'objet spécifié n'existe pas ou n'est pas un mesh")
     
+def apply_cube_projection_uv_scaling(obj_name, scale_factor):
+    # Trouver l'objet par son nom
+    obj = bpy.data.objects.get(obj_name)
+    if not obj or obj.type != 'MESH':
+        print(f"L'objet {obj_name} n'existe pas ou n'est pas un mesh.")
+        return
+    # Sélectionner l'objet
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    # Passer en mode édition
+    bpy.ops.object.mode_set(mode='EDIT')
+    # Sélectionner tout pour le UV mapping
+    bpy.ops.mesh.select_all(action='SELECT')
+    # Appliquer la projection cubique
+    bpy.ops.uv.cube_project(scale_to_bounds=False)
+    # Passer en mode de modification des UVs pour ajuster l'échelle
+    bpy.ops.object.mode_set(mode='OBJECT')
+    uv_layer = obj.data.uv_layers.active.data
+    # Ajuster l'échelle des UVs
+    for poly in obj.data.polygons:
+        for loop_index in poly.loop_indices:
+            uv_layer[loop_index].uv *= scale_factor
+    # Retourner en mode objet
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print(f"UV mapping et scaling appliqués à l'objet {obj_name}.")
 
 
-#bpy.ops.object.mode_set(mode='OBJECT')
-
+##############################################################################
+try:
+    bpy.ops.object.mode_set(mode='OBJECT')
+except:
+    pass
 STL_ROOT = "C:/Users/Admin/Documents/programmation/PyTrackAssettoCorsa"
-potentially_to_delete = ["1ROAD1", "1GRASS0", "1GRASS1", "1GRASS2", "1GRASS_L", "1GRASS_R", "1KERB_L", "1KERB_R"]
+potentially_to_delete = ["1ROAD1",
+                         "1GRASS_L_LAND", "1GRASS_R_LAND", "1GRASS_INSIDE", "1ROAD_L", "1ROAD_R",
+                         "1KERB_L1", "1KERB_R1", "1KERB_L2", "1KERB_R2"]
 for name in potentially_to_delete:
     delete_object(name)
 apply_steps("1ROAD1", "Asphalt", "Track")
-#apply_steps("1GRASS0", "Grass", "Track")
-#apply_steps("1GRASS1", "Grass", "Track")
-apply_steps("1GRASS_L", "Grass", "Track") #smooth, external grass
-apply_steps("1GRASS_R", "Grass", "Track") #smooth, external grass
-apply_steps("1KERB_L", "Kerb", "Kerb")
-apply_steps("1KERB_R", "Kerb", "Kerb")
-#fill_inside_mesh("1GRASS1", "1GRASS2") #creates 1GRASS2
+apply_steps("1GRASS_L_LAND", "Grass", "Track")
+apply_steps("1GRASS_R_LAND", "Grass", "Track")
+apply_steps("1ROAD_L", "Asphalt", "Track") #smooth, external grass
+apply_steps("1ROAD_R", "Asphalt", "Track") #smooth, external grass
+apply_steps("1KERB_L1", "Kerb1", "Kerb")
+apply_steps("1KERB_L2", "Kerb2", "Kerb")
+apply_steps("1KERB_R1", "Kerb1", "Kerb")
+apply_steps("1KERB_R2", "Kerb2", "Kerb")
+fill_inside_mesh("1GRASS_R_LAND", "1GRASS_INSIDE") #creates 1GRASS_INSIDE
+
+apply_cube_projection_uv_scaling("1ROAD1", 180.)
+apply_cube_projection_uv_scaling("1ROAD_L", 180.)
+apply_cube_projection_uv_scaling("1ROAD_R", 180.)
+
+apply_cube_projection_uv_scaling("1GRASS_L_LAND", 180.)
+apply_cube_projection_uv_scaling("1GRASS_R_LAND", 180.)
+apply_cube_projection_uv_scaling("1GRASS_INSIDE", 180.)
+
 
 # save_as_fbx("./my_track.fbx")
