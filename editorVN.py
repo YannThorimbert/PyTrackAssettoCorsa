@@ -11,6 +11,8 @@ import pickle
 import tkinter as tk
 from tkinter import filedialog
 
+import radial as rad
+
 pygame.init()
 
 W,H = 2700, 1200
@@ -19,6 +21,7 @@ tp.init(screen)
 
 MAGNET1 = 20
 MAGNET2 = 20
+COLOR_POINT_HOVER = (0,255,0)
 
 
 
@@ -42,42 +45,14 @@ def find_max_dist_on_lane(pts, profile_points) -> float:
         distances.append(d)
     return max(distances)
 
-def autoadapt_resolution():
-    max_dist = find_max_dist_on_lane(track.left_lane, track.profile_L)
-    print("max dist found", max_dist)
-    current_res = e_res.get_value()
-    new_res = int(current_res * max_dist)
-    e_res.set_value(new_res)
-    track.refresh_if_needed(force=True)
+# def autoadapt_resolution():
+#     max_dist = find_max_dist_on_lane(track.left_lane, track.profile_L)
+#     print("max dist found", max_dist)
+#     current_res = e_res.get_value()
+#     new_res = int(current_res * max_dist)
+#     e_res.set_value(new_res)
+#     track.refresh_if_needed(force=True)
 
-# def make_land_triangles(land_points, lane_points, profile, flip_faces=False, cliffs=None):
-#     assert len(profile) == len(lane_points)
-#     triangles = []
-#     last_land_point = None
-#     for i in range(len(lane_points)+1):
-#         alt_q = profile[i%len(lane_points)][1]
-#         q = lane_points[i%len(lane_points)]
-#         alt_r = profile[(i+1)%len(lane_points)][1]
-#         r = lane_points[(i+1)%len(lane_points)]
-#         _, s = track.closest_point(q, float("inf"), candidates=land_points)
-#         # distances = [p.distance_to(q) for p in land_points]
-#         if cliffs is None:
-#             alt_land = (alt_q+alt_r)/2
-#         else:
-#             alt_land = cliffs #otherwise, user choose altitude of cliff bottom
-#         if flip_faces:
-#             triangles.append((tri(q,alt_q), tri(s,alt_land), tri(r,alt_r)))
-#         else:
-#             triangles.append((tri(q,alt_q), tri(r,alt_r), tri(s,alt_land)))
-#         if last_land_point and s != last_land_point:
-#             if cliffs is None:
-#                 alt_land = alt_q
-#             if flip_faces:
-#                 triangles.append((tri(q,alt_q), tri(last_land_point,alt_land), tri(s,alt_land)))
-#             else:
-#                 triangles.append((tri(q,alt_q), tri(s,alt_land), tri(last_land_point,alt_land)))
-#         last_land_point = s
-#     return triangles
 
 def make_land_triangles(land_points, lane_points, profile, flip_faces=False, cliffs=-1):
     assert len(profile) == len(lane_points)
@@ -148,38 +123,7 @@ def dist(p1, p2) -> float:
 def dist_sqr(p1,p2) -> float:
     return (p1[0]-p2[0])**2 + (p1[1]-p2[1])**2
 
-# def get_spline(pts, close_loop, num:int) -> list[tuple[float,float]]:
-#     if close_loop:
-#         pts = pts + [pts[0]]
-#     x = [point[0] for point in pts]
-#     y = [point[1] for point in pts]
-#     tck, u = splprep([x, y], s=0, per=close_loop)
-#     u_new = np.linspace(0, 1, num=num)
-#     new_points = splev(u_new, tck)
-#     new_points_list = list(zip(new_points[0], new_points[1]))
-#     if close_loop:
-#         # new_points_list[-1] = new_points_list[0]
-#         new_points_list.pop()
-#     return new_points_list
 
-def get_spline(pts, close_loop, num:int) -> list[tuple[float,float]]:
-    # s=0
-    # k=3
-    # weights=None
-    s=e_spline_s.get_value()
-    k=e_spline_k.get_value()
-    weights=None
-    if close_loop:
-        pts = pts + [pts[0]]  # Ensure the loop is closed by repeating the first point
-    x = [point[0] for point in pts]
-    y = [point[1] for point in pts]
-    tck, u = splprep([x, y], s=s, k=k, per=close_loop)  # Additional parameters
-    u_new = np.linspace(0, 1, num=num)
-    new_points = splev(u_new, tck)
-    new_points_list = list(zip(new_points[0], new_points[1]))
-    if close_loop:
-        new_points_list.pop()  # Remove the last point to avoid duplication
-    return new_points_list
 
 def avg(pts):
     avg = []
@@ -205,24 +149,69 @@ def add_devers(profile:list[tuple[float,float]], other:list[tuple[float,float]],
         new_profile.append((x1, z1+devers))
     return new_profile
 
+# def smooth_profile(profile, num:int) -> list[tuple[float,float]]:
+#     profile[-1] = (1., profile[0][1]) #close loop
+#     for i in range(len(profile)-1):
+#         if profile[i][0] > profile[i+1][0]:
+#             print(profile)
+#             assert False, "profile not sorted"
+#     x = [point[0] for point in profile]
+#     y = [point[1] for point in profile]
+#     new_x = []
+#     new_y = []
+#     for i in range(num):
+#         fraction = i/num
+#         for j in range(len(x)-1):
+#             # k = (j+1)%len(x)
+#             k = j + 1
+#             if x[j] <= fraction < x[k]: #found the 2 x values that surround t
+#                 fraction_in_segment = (fraction-x[j])/(x[k]-x[j])
+#                 new_x.append(fraction)
+#                 new_y.append(y[j] + (y[k]-y[j]) * smoothstep(fraction_in_segment))
+#                 break
+#     # import matplotlib.pyplot as plt
+#     # plt.plot(new_x, new_y, "--")
+#     # plt.plot(x,y,"o")
+#     # plt.show()
+#     return list(zip(new_x, new_y))
+
+# Since the points are not necessarily evenly spaced, we interpolate according to distance, not index.
 def smooth_profile(profile, num:int) -> list[tuple[float,float]]:
     profile[-1] = (1., profile[0][1]) #close loop
     for i in range(len(profile)-1):
         if profile[i][0] > profile[i+1][0]:
             print(profile)
             assert False, "profile not sorted"
+    #1. [(x,y), ...] ---> [x, ...] and [y, ...]
     x = [point[0] for point in profile]
     y = [point[1] for point in profile]
+    #2. Compute the total length of the profile
+    tot_dist = 0
+    i_to_dist = [0.]
+    assert num == len(track.left_lane)
+    for i in range(1, len(track.left_lane)):
+        p = V2(track.left_lane[i])
+        q = V2(track.left_lane[i-1])
+        tot_dist += p.distance_to(q)
+        i_to_dist.append(tot_dist)
     new_x = []
     new_y = []
-    for i in range(num):
-        t = i/num
+    for i in range(num): TODO: fusion with above loop
+        fraction = i_to_dist[i]/tot_dist
+        if fraction == 1:
+            new_x.append(1.)
+            new_y.append(y[-1])
+            break
         for j in range(len(x)-1):
-            if x[j] <= t <= x[j+1]:
-                tt = (t-x[j])/(x[j+1]-x[j])
-                new_x.append(t)
-                new_y.append(y[j] + (y[j+1]-y[j]) * smoothstep(tt))
+            # k = (j+1)%len(x)
+            k = j + 1
+            if x[j] <= fraction < x[k]: #found the 2 x values that surround t
+                fraction_in_segment = (fraction-x[j])/(x[k]-x[j])
+                new_x.append(fraction)
+                new_y.append(y[j] + (y[k]-y[j]) * smoothstep(fraction_in_segment))
                 break
+        else:
+            assert False, f"{fraction}, {i}, {tot_dist}, {x}, {j}->{k}"
     # import matplotlib.pyplot as plt
     # plt.plot(new_x, new_y, "--")
     # plt.plot(x,y,"o")
@@ -239,7 +228,9 @@ class Track:
         # self.points:list[tuple[float,float]]  = []
         m = W//4
         h = H//2-100
-        self.points:list[tuple[float,float]]  = [(m, h), (W//2,h), (W-m, h), (W-m, h+100), (W//2,h+100), (m, h+100)]
+        dh = 300
+        self.points:list[tuple[float,float]]  = [(m, h), (W-m, h), (W-m, h+dh), (m, h+dh)]
+        # self.points:list[tuple[float,float]]  = [(m, h), (W//2,h-50), (W-m, h), (W-m, h+100), (W//2,h+100), (m, h+100)]
         self.left_lane:list[tuple[float,float]] = []
         self.right_lane:list[tuple[float,float]]  = []
         self.left_land:list[tuple[float,float]]  = []
@@ -260,6 +251,9 @@ class Track:
         self.auto_kerbs = True
         self.params = [] #for load/save
         self.fn = ""
+        self.centers:list[V2|None] = [None for _ in self.points]
+        self.loop:rad.Loop = rad.Loop(self.points, self.centers)
+        self.refs:list[int] = []
         
 
     def recompute_kerbs(self):
@@ -267,6 +261,8 @@ class Track:
         self.added_turns_R.clear()
         self.refresh_if_needed(force=True)
         self.turns_L, self.turns_R = self.detect_kerbs()
+        self.turns_L = self.fill_kerbs_holes(self.turns_L)
+        self.turns_R = self.fill_kerbs_holes(self.turns_R)
 
 
     def save_to_disk(self, fn="") -> None: 
@@ -279,7 +275,8 @@ class Track:
                 fn += ".track"
             self.fn = fn
             fn = os.path.basename(self.fn)
-            e_filename.set_text(fn)
+            print(fn)
+            e_filename.set_text(fn, adapt_parent=False)
             attributes = ["points", "added_turns_L", "added_turns_R", "profile_L", "profile_R",
                           "close_loop", "width", "params", "added_left_land", "added_right_land"]
             self.params = [
@@ -365,10 +362,7 @@ class Track:
     def refresh_if_needed(self, force=False, also_force_land=False):
         if self.need_refresh or force:
             self.width = e_width.get_value()
-            num = int(e_res.get_value())
-            if num >= 1 and len(self.points) >= 4:
-                # self.left_lane = self.get_spline(num*len(self.points))
-                self.left_lane = get_spline(self.points, self.close_loop, num*len(self.points))
+            if len(self.points) >= 3:
                 self.right_lane = self.build_lane(self.left_lane, self.width, 90)
                 self.refresh_land_light()
                 if also_force_land:
@@ -386,12 +380,17 @@ class Track:
             prev_point = V2(pts[idx_prev])
             here = V2(pts[i])
             next_point = V2(pts[idx_next])
-            if here.distance_squared_to(next_point) < 1e-6:
+            prob_next = here.distance_squared_to(next_point) < 1e-6
+            prob_prev = here.distance_squared_to(prev_point) < 1e-6
+            if prob_next and prob_prev:
+                lane.append(here + V2(width, width))
+                continue
+            if prob_next:
                 dir_prev = (here-prev_point).normalize()
                 right_p = here + width * dir_prev.rotate(angle)
                 lane.append((right_p.x, right_p.y))
                 continue
-            elif here.distance_squared_to(prev_point) < 1e-6:
+            elif prob_prev:
                 dir_next = (next_point-here).normalize()
                 right_p = here + width * dir_next.rotate(angle)
                 lane.append((right_p.x, right_p.y))
@@ -585,7 +584,9 @@ class Track:
                 p = V2(lane[i])
                 j = (i+1)%len(lane)
                 alt_q = profile[j][1] + base
-                q = V2(lane[j]) 
+                q = V2(lane[j])
+                if p.distance_squared_to(q) < 1e-6:
+                    continue
                 r = p + (q-p).normalize().rotate(angle) * w
                 s = q + (q-p).normalize().rotate(angle) * w
                 devers_r = (profile2[i][1] - profile[i][1]) * w / self.width
@@ -616,7 +617,8 @@ class Track:
         turns.sort()
         new_turns = []
         for i in turns:
-            new_turns.append(i)
+            if i > last_i:
+                new_turns.append(i)
             gap = i - last_i
             if gap == 0:
                 serie += 1
@@ -629,6 +631,16 @@ class Track:
                     serie = 0
             last_i = i
         return new_turns
+        # nnt = []
+        # for loop_index in range(len(new_turns)):
+        #     prev = (loop_index-1)%len(new_turns)
+        #     turn_here = new_turns[loop_index]
+        #     turn_before = new_turns[prev]
+        #     if turn_before == turn_here:
+        #         assert False
+        #     else:
+        #         nnt.append(turn_here)
+        # return nnt
 
     def detect_kerbs(self):
         turnsL, turnsR = [], []
@@ -674,22 +686,6 @@ class Track:
                 return i, coord, "spline"
         return -1, None, None
     
-    def remontada_spline(self, spline_index:int) -> int:
-        """Returns the index of the next raw point"""
-        i = spline_index
-        n = 200
-        while i < len(self.left_lane)-1:
-            p = V2(self.left_lane[i])
-            q = V2(self.left_lane[i+1])
-            direction_unit = (q-p)/n
-            for step in range(n+1):
-                to_check = p + direction_unit * step
-                k, _ = self.closest_point(to_check, 3)
-                if k >= 0:
-                    return k
-            i += 1
-        # assert False
-        return len(self.left_lane)-1
     
     def reset_added_land(self):
         self.added_left_land = []
@@ -762,12 +758,20 @@ def spawn_valid_land_points(res_w, res_h):
 
 
 def change_cat():
-    global e_edit
+    global e_edit, e_help
     cat = e_cat.get_value()
     if not cat:
         cat = "Track"
     e_all.replace_child(e_edit, categories[cat])
     e_edit = categories[cat]
+    h = helps_cat.get(cat)
+    if h:
+        e_all.replace_child(e_help, h)
+        e_help = h
+        e_help.stick_to(screen, "top", "top")
+        e_help.set_invisible(False)
+    else:
+        e_help.set_invisible(True)
     for e in categories.keys():
         if e != cat:
             categories[e].set_invisible(True, recursive=True)
@@ -775,31 +779,17 @@ def change_cat():
     e_edit.stick_to(screen, "left", "left", (10,0))
     # categories[cat].set_draggable(True,True,False,False)
 
-def my_stuff(): #do what you want with the display like in any pygame code you write
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_u] or keys[pygame.K_i]:
-        print(e_edit, e_edit.get_rect())
-        e_edit.set_invisible(False, recursive=True)
-        e_edit.cannot_draw_outside = False
-        e_edit.draw_outlines_on_screen_for_debug()
-        tp.pause()
-        if keys[pygame.K_u]:
-            cand = track.left_lane
-            turns = track.added_turns_L
-            autoturns = track.turns_L
-        else:
-            cand = track.right_lane
-            turns = track.added_turns_R
-            autoturns = track.turns_R
-        i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1, candidates=cand)
-        if i >= 0:
-            if pygame.key.get_mods() & pygame.KMOD_CTRL:
-                if i in turns:
-                    turns.remove(i)
-                elif i in autoturns:
-                    autoturns.remove(i)
-            elif not(i in turns) and not(i in autoturns):
-                turns.append(i)
+def update_all(): #do what you want with the display like in any pygame code you write
+    pts, refs = track.loop.to_points(e_res.get_value())
+    # pygame.draw.lines(screen, (0,155,0), True, pts, 2)
+    track.left_lane = pts
+    track.refs = refs
+    # for point in pts:
+    #     pygame.draw.circle(screen, (0,0,0), point, 2)
+    select = e_cat.get_value()
+    actual = categories.get(select)
+    if actual and not(actual is e_edit):
+        change_cat()
     i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1, candidates=track.left_lane)
     prof = track.smoothed_profile_L
     if i >= 0 and i < len(prof):
@@ -809,11 +799,39 @@ def my_stuff(): #do what you want with the display like in any pygame code you w
         e_alt.set_bottomright(-10,-10) #quick hide
     #
     track.refresh_if_needed()
-    draw_all()
 
 def draw_all():
-    screen.fill((255,255,255))  
-    ################# ASPHALT AND LAND ###########################
+    collided = None
+    track_mode = e_cat.get_value() == "Track"
+    screen.fill((255,255,255))
+    ######
+    mp = pygame.mouse.get_pos()
+    track.loop = rad.Loop(track.points, track.centers)
+    if pygame.key.get_pressed()[pygame.K_SPACE]:
+        i, coord = track.closest_point(mp, 400)
+        if i >= 0:
+            assert len(track.points) == len(track.loop.turns)
+            i_turn = track.loop.i_track_to_loop(i)
+            # i_turn = (i-1)%len(track.points)
+            turn = track.loop.turns[i_turn]
+            v = V2(mp) - turn.q()
+            w = turn.bissec(400) - turn.q()
+            if w.length_squared() < 1e-6:
+                w = turn.s1.delta.rotate(90)
+            mouse_proj = v.project(w)
+            point_on_bissec = turn.q() + mouse_proj
+            #
+            turn.compute_c(point_on_bissec)
+            # print(turn.s1.ar.distance_squared_to(turn.s1.br), turn.s2.ar.distance_squared_to(turn.s2.br) )
+            d1 = (turn.s1.ar-turn.s1.br).length()
+            d2 = (turn.s2.ar-turn.s2.br).length()
+            # print(d1,d2)
+            # if d1 > 10 and d2 > 10:
+            track.centers[i] = turn.d
+            track.mark_refresh()
+    # else:
+        # print("turn 0 5", track.loop.turns[5].d, track.loop.turns[5].c)
+    # ################# ASPHALT AND LAND ###########################
     fill_color = e_fill_visual.get_value()
     # if e_show_land.get_value():
     if False:
@@ -827,76 +845,67 @@ def draw_all():
         track.draw_polygon(track.right_land, (255,255,255), 2, fill_color)
         # for i_p, point in enumerate(track.right_land):
         #     pygame.draw.circle(screen, (0,0,255), point, 2)
-    ################ POINTS ############################
-    for i_p, point in enumerate(track.points):
-        pygame.draw.circle(screen, (0,0,0), point, 6)
-    ###################### PROFILE ############################
-    if len(track.smoothed_profile_L) > 4 and e_show_alt.get_value():
+    # ################ POINTS ############################
+    if track_mode:
+        for i_p, point in enumerate(track.points):
+            pygame.draw.circle(screen, (0,0,0), point, 6)
+    # ###################### PROFILE ############################
+    if len(track.smoothed_profile_L) > 4 and (e_show_alt.get_value() or e_cat.get_value() == "Terrain"):
+        base_r_h = 20
         n_ticks = 40
         profile = track.smoothed_profile_L
         lane = track.left_lane
+        #Draw interpolated bars
         for i in range(0,len(profile), len(profile)//n_ticks):
             alt = profile[i][1]
-            rect = pygame.Rect(lane[i], (4,6+alt))
+            rect = pygame.Rect(lane[i], (4,base_r_h+alt))
             pygame.draw.rect(screen, (50,50,50), rect)
         i_prof = 0
+        def collide(rect, i_prof):
+            if rect.collidepoint(pygame.mouse.get_pos()) and e_cat.get_value() == "Terrain":
+                pygame.draw.rect(screen, (255,0,0), rect)
+                return i_prof
+            return None
         for x,alt in track.profile_L[0:-1]: #last is first so skip it
             idx = int(x * len(profile))
             coord = lane[idx]
-            rect = pygame.Rect(coord, (10,6+alt))
+            rect = pygame.Rect(coord, (20,base_r_h+alt))
             pygame.draw.rect(screen, (0,200,0), rect)
             pygame.draw.rect(screen, (0,0,0), rect, 1)
-            if rect.collidepoint(pygame.mouse.get_pos()):
-                pygame.draw.rect(screen, (255,0,0), rect)
-                if pygame.key.get_pressed()[pygame.K_e]:
-                    track.mark_refresh()
-                    alt_L, alt_R, deletion = choose_alt_i(i_prof)
-                    if deletion:
-                        print("deleted", i_prof)
-                        return
-                    else:
-                        track.profile_L[i_prof] = (x, alt_L)
-                        track.profile_R[i_prof] = (x, alt_R)
+            collided = collide(rect, i_prof)
             i_prof += 1
         ##########################################################
         profile = track.smoothed_profile_R
         lane = track.right_lane
         for i in range(0,len(profile), len(profile)//n_ticks):
             alt = profile[i][1]
-            rect = pygame.Rect(lane[i], (4,6+alt))
+            rect = pygame.Rect(lane[i], (4,base_r_h+alt))
             pygame.draw.rect(screen, (50,50,50), rect)
         i_prof = 0
         for x,alt in track.profile_R[0:-1]: #last is first so skip it
             idx = int(x * len(profile))
             coord = lane[idx]
-            rect = pygame.Rect(coord, (10,6+alt))
+            rect = pygame.Rect(coord, (20,base_r_h+alt))
             pygame.draw.rect(screen, (255,255,0), rect)
             pygame.draw.rect(screen, (0,0,0), rect, 1)
-            if rect.collidepoint(pygame.mouse.get_pos()):
-                pygame.draw.rect(screen, (255,0,0), rect)
-                if pygame.key.get_pressed()[pygame.K_e]:
-                    track.mark_refresh()
-                    alt_L, alt_R, deletion = choose_alt_i(i_prof)
-                    if deletion:
-                        print("deleted", i_prof)
-                        return
-                    else:
-                        track.profile_L[i_prof] = (x, alt_L)
-                        track.profile_R[i_prof] = (x, alt_R)
+            collided_tmp = collide(rect, i_prof)
+            if collided_tmp:
+                collided = collided_tmp
             i_prof += 1
     ################ TURNS (KERBS) ############################
-    if e_show_kerbs.get_value():
+    if e_show_kerbs.get_value() or e_cat.get_value() == "Kerbs":
         for i in track.turns_L + track.added_turns_L:
             pygame.draw.rect(screen, (255,0,0), pygame.Rect(track.left_lane[i], (6,6)))
         for i in track.turns_R + track.added_turns_R:
             pygame.draw.rect(screen, (0,0,255),  pygame.Rect(track.right_lane[i], (6,6)))
-    #### HANDLE CURSOR ################################################
+    # #### HANDLE CURSOR ################################################
     i, coord, kind = track.get_raw_or_spline_point(pygame.mouse.get_pos())
     if kind == "raw":
-        pygame.draw.circle(screen, (0,0,255), coord, 8)
-        pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
+        if track_mode:
+            pygame.draw.circle(screen, COLOR_POINT_HOVER, coord, 8)
+            pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_HAND)
     elif kind == "spline":
-        pygame.draw.circle(screen, (0,0,255), coord, 5)
+        if track_mode: pygame.draw.circle(screen, COLOR_POINT_HOVER, coord, 5)
         pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_CROSSHAIR)
     else:
         pygame.mouse.set_cursor(pygame.SYSTEM_CURSOR_ARROW)
@@ -912,7 +921,11 @@ def draw_all():
             pygame.draw.circle(screen, (0,0,255), point, 4)
         for i_p, point in enumerate(track.added_right_land):
             pygame.draw.circle(screen, (255,0,0), point, 4)
-    e_alt.draw()
+    # e_alt.draw()
+    # track.loop.draw(screen)
+    if track.left_lane:
+        pygame.draw.circle(screen, (255,0,0), track.left_lane[0], 12)
+    return collided
 
 def save_layout_image(bck=(0,0,0,0), asphalt=(250,)*3, res=(1920,1080)):
     W, H = res
@@ -961,7 +974,7 @@ def choose_alt_i(i) -> int:
         tp.quit_current_loop()
         DeletedPoint.value = True
         track.refresh_if_needed(force=True)
-        print(track.profile_L)
+        # print(track.profile_L)
     if i > 0 and i < len(track.profile_L)-1:
         d = tp.Button("Delete altitude marker")
         # d.at_unclick = lambda: track.profile_L.pop(i) and track.profile_R.pop(i) and tp.quit_current_loop()
@@ -993,8 +1006,12 @@ def choose_alt_i(i) -> int:
     # print("exiting", deleted_point)
     return b.get_value(), c.get_value(), DeletedPoint.value
 
+def shift(pts, dx, dy):
+    for i in range(len(pts)):
+        pts[i] = (pts[i][0]+dx, pts[i][1]+dy)
+
 # e_res = tp.TogglablesPool("Display", ["Raw points", "Splines 2", "Splines 4", "Splines 16"], 0)
-e_res = tp.SliderWithText("Mesh resolution", 0, 512, 32, 100)
+e_res = tp.SliderWithText("Mesh resolution", 0.01, 3, 0.5, 100)
 e_res.slider.dragger.at_drag = track.mark_refresh
 
 e_width = tp.SliderWithText("Track width", 1, 64, 16, 100)
@@ -1007,8 +1024,8 @@ e_width_land = tp.SliderWithText("Land Width", 0, 100, 30, 100)
 e_width_land.slider.dragger.at_drag = track.mark_refresh
 
 e_fill_visual = tp.Labelled("Fill color", tp.Checkbox(True))
-e_show_kerbs = tp.Labelled("Kerbs", tp.Checkbox(False))
-e_show_alt = tp.Labelled("Altitude", tp.Checkbox(False))
+e_show_kerbs = tp.Labelled("Kerbs", tp.Checkbox(True))
+e_show_alt = tp.Labelled("Altitude", tp.Checkbox(True))
 e_show_land = tp.Labelled("Grass", tp.Checkbox(False))
 
 e_savep = tp.Button("Save project as...")
@@ -1020,16 +1037,14 @@ e_loadp.at_unclick = track.load_from_disk
 e_alt = tp.Text("Alt: 0 m\nTrack fraction: 0%")
 e_alt.set_bottomleft(50, H-e_alt.get_current_height()-10)
 
-e_refresh_land = tp.Button("Refresh Land")
-e_refresh_land.at_unclick = track.refresh_land
+# e_refresh_land = tp.Button("Show terrain mesh points")
+# e_refresh_land.at_unclick = track.refresh_land
 
 e_cliff = tp.SliderWithText("Cliff height", -1, 100, 0, 100)
+tp.Helper("Elevation difference between the track and the grass. -1 means no difference ('flat' terrain locally).", e_cliff, 30)
 
 e_save = tp.Button("Export STL's")
 e_save.at_unclick = track.write_all_stls
-
-e_find_resolution = tp.Button("Auto compute resolution")
-e_find_resolution.at_unclick = autoadapt_resolution
 
 
 e_recompute_kerbs = tp.Button("Remove & recompute kerbs")
@@ -1038,10 +1053,14 @@ e_recompute_kerbs.at_unclick = track.recompute_kerbs
 e_auto_kerbs_sensitivity = tp.SliderWithText("Autokerbs\nsensitivity", 0, 100, 50, 100)
 
 e_land_res = tp.SliderWithText("Land resolution", 10, 210, 80, 100)
-e_autoland_m = tp.SliderWithText("Autoland tolerance1", 0., 50., 10, 100)
-e_autoland_M = tp.SliderWithText("Autoland tolerance2", 0., 200., 30., 100)
-e_reset_added_land = tp.Button("Reset added land")
+tp.Helper("Impacts the number of vertices used for the terrain mesh. High values can result is a long processing time.", e_land_res, 30)
+e_autoland_m = tp.SliderWithText("Close tolerance", 0., 50., 10, 100)
+tp.Helper("How close terrain points can be from the track", e_autoland_m, 30)
+e_autoland_M = tp.SliderWithText("Far tolerance", 0., 200., 30., 100)
+tp.Helper("How far terrain points can be from the track", e_autoland_M, 30)
+e_reset_added_land = tp.Button("Reset user's land points")
 e_reset_added_land.at_unclick = track.reset_added_land
+tp.Helper("Remove all the points you have added.", e_autoland_M, 30)
 
 e_kerb_w = tp.SliderWithText("Kerb width factor", 0., 1., 0.15, 100)
 e_kerb_h0 = tp.SliderWithText("Kerb base height", 0., 0.1, 0., 100, round_decimals=2)
@@ -1050,74 +1069,66 @@ e_kerb_dh = tp.SliderWithText("Kerb dh factor", 0., 2., 0.9, 100)
 
 e_filename = tp.Text("track not saved")
 
-e_spline_s = tp.SliderWithText("Spline smoothness", 0, 10000, 0, 100)
-e_spline_s.slider.dragger.at_drag = track.mark_refresh
-
-e_spline_k = tp.SliderWithText("Spline order", 1, 5, 3, 50)
-e_spline_k.slider.dragger.at_drag = track.mark_refresh
-
-e_box_track = tp.TitleBox("Track",[e_res, e_find_resolution, e_width, e_spline_s, e_spline_k])
+e_box_track = tp.TitleBox("Track",[e_res, e_width])
 # e_box_land = tp.TitleBox("Terrain",[e_avg_land, e_width_land, e_cliff, e_land_res,
 #                                     e_autoland_m, e_autoland_M, e_reset_added_land, e_refresh_land])
-e_box_land = tp.TitleBox("Terrain",[e_cliff, e_land_res, e_autoland_m, e_autoland_M, e_reset_added_land, e_refresh_land])
+e_box_land = tp.TitleBox("Terrain",[e_cliff, e_land_res, e_autoland_m, e_autoland_M, e_reset_added_land])
 # e_box_land.sort_children("grid", ny=1)
 e_box_kerb = tp.TitleBox("Kerbs",[e_kerb_w, e_kerb_h0, e_kerb_h, e_kerb_dh, e_auto_kerbs_sensitivity, e_recompute_kerbs])
 # e_box_kerb.sort_children("grid", ny=1)
-e_box_draw = tp.TitleBox("Display",[e_fill_visual, e_show_kerbs, e_show_alt])
+e_box_draw = tp.Group([e_fill_visual, e_show_kerbs, e_show_alt], "h")
+# e_box_draw = tp.TitleBox("Display",[e_fill_visual, e_show_kerbs, e_show_alt])
+# e_box_draw.sort_children("h")
+e_box_draw.set_topright(W-10, 10)
 # e_box_disk = tp.Group([e_filename, e_savep, e_loadp, e_save])
 e_box_disk = tp.TitleBox("File",[e_filename, e_savep, e_loadp, e_save])
 
-def launch_help():
-    font_size = 20
-    font_color = (0,0,0)
-    text = """#col_Right click# on the track to add points.
-Drag points to move them.
-When hovering a point, press #col_X# to delete it.
-Press #col_<A># or #col_D# to add a point before or after the hovered point.
+e_help_track = tp.Text("""#col_Right click# on the track to add points. You can drag points to move them.
+When hovering a point, press #col_X# to delete it.""".replace("#col_", "#RGB(0,0,255)"))
+e_help_track.set_font_rich_text_tag("#")
 
-Press #col_<T># to add an altitude constraint at the hovered point.
-When hovering an altitude bar, press #col_<E># to edit the altitude of a point.
+e_help_terrain = tp.Text("""#col_Left click# to add an elevation constraint at the hovered point.
+When hovering an altitude bar, #col_left click# it to edit the constraint.
+#col_LCTRL+Left/Right click# to add a left/right land point at the mouse position (useful when terrain mesh is messy).""".replace("#col_", "#RGB(0,0,255)"))
+e_help_terrain.set_font_rich_text_tag("#")
 
-Press #col_<U># or #col_>I# to add kerbs at the hovered point on the left or right side.
-In addition, hold #col_<LCTRL># to remove the kerbs
+e_help_kerbs = tp.Text("""#col_Left/Right click# to add a left/right kerb at the mouse position. Hold #col_<LCTRL># to remove the kerbs""".replace("#col_", "#RGB(0,0,255)"))
+e_help_kerbs.set_font_rich_text_tag("#")
 
-Press #col_<SPACE># to add a LAND point at the mouse position (useful for debugging mesh).
+e_help_file = tp.Text("""Once the STL files are exported, open them in your favourite 3D editor for texture editing and export as FBX.
+In Blender, you may find the script 'blender.py' (provided with this project) very useful for quick updates.""".replace("#col_", "#RGB(0,0,255)"))
+e_help_file.set_font_rich_text_tag("#")
 
-Once the STL files are exported, open them in your favourite 3D editor for texture editing and export as FBX.
-In Blender, you may find the script 'blender.py' very useful for quick updates.""".replace("#col_", "#RGB(0,0,255)")
-    e_text = tp.Text(text, font_size, font_color)
-    e_text.set_font_rich_text_tag("#")
-    b = tp.TitleBox("Help", [e_text])
-    b.center_on(screen)
-    b.launch_alone()
-e_help = tp.Button("How to use\nthis editor")
-e_help.at_unclick = launch_help
+e_help = e_help_track
+
+helps_cat = {"Track":e_help_track, "Terrain":e_help_terrain, "Kerbs":e_help_kerbs, "File":e_help_file}
 
 
-e_cat = tp.DropDownListButton(["Track", "Terrain", "Kerbs", "Display", "File", "Help"])
-e_cat.set_value("Track")
-e_cat.at_unclick = change_cat
-e_lab_cat = tp.Labelled("Edit:", e_cat)
-e_lab_cat.set_topleft(10,10)
+
+
+
+
+
+e_cat = tp.TogglablesPool("Edit", ["Track", "Terrain", "Kerbs", "File"], 0)
+# e_cat.at_unclick = change_cat
+e_cat.set_topleft(10,10)
 
 categories = {
     "File": e_box_disk,
     "Track": e_box_track,
     "Terrain": e_box_land,
     "Kerbs": e_box_kerb,
-    "Display": e_box_draw,
-    "Help": e_help
               }
 
 e_edit = categories["Track"]
 
-e_all = tp.Group([e_lab_cat, e_edit], None)
+e_all = tp.Group([e_cat, e_edit, e_box_draw, e_help], None)
 updater = e_all.get_updater()
 
 
-track.refresh_if_needed(force=True)
+# track.refresh_if_needed(force=True)
 # track.load_from_disk("m93.track")
-track.refresh_if_needed(force=True)
+# track.refresh_if_needed(force=True)
 
 track.smoothed_profile_L = smooth_profile(track.profile_L, len(track.left_lane))
 track.smoothed_profile_R = smooth_profile(track.profile_R, len(track.right_lane))
@@ -1125,6 +1136,110 @@ track.smoothed_profile_R = smooth_profile(track.profile_R, len(track.right_lane)
 change_cat()
 
 zoom = 1.
+
+def events_terrain(events, mouse_rel, collided):
+    cat = e_cat.get_value()
+    if not cat == "Terrain":
+        return
+    ctrl_pressed = pygame.key.get_mods() & pygame.KMOD_CTRL
+    for e in events:
+        if e.type == pygame.MOUSEBUTTONDOWN:
+            if e.button == 3 and ctrl_pressed: #right
+                track.added_right_land.append(pygame.mouse.get_pos())
+            elif e.button == 1 and ctrl_pressed: #left
+                track.added_left_land.append(pygame.mouse.get_pos())
+            elif e.button == 1 and collided:
+                track.mark_refresh()
+                alt_L, alt_R, deletion = choose_alt_i(collided)
+                print(alt_L, alt_R, deletion)
+                if deletion:
+                    print("deleted", collided)
+                    return
+                else:
+                    l, r = track.profile_L[collided], track.profile_R[collided]
+                    track.profile_L[collided] = (l[0], alt_L)
+                    track.profile_R[collided] = (r[0], alt_R)
+            elif e.button == 1:
+                track.mark_refresh()
+                i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1, candidates=track.left_lane)
+                x_elevation = i / len(track.left_lane)
+                track.insert_profile_point(x_elevation, track.profile_L)
+                track.insert_profile_point(x_elevation, track.profile_R)
+                    
+                
+
+def events_kerb(events, mouse_rel):
+    cat = e_cat.get_value()
+    if not cat == "Kerbs":
+        return
+    for e in events:
+        if e.type == pygame.MOUSEMOTION:
+            right = pygame.mouse.get_pressed()[2]
+            left = pygame.mouse.get_pressed()[0]
+            if right: #right
+                cand = track.right_lane
+                turns = track.added_turns_R
+                autoturns = track.turns_R
+            elif left: #left
+                cand = track.left_lane
+                turns = track.added_turns_L
+                autoturns = track.turns_L
+            if left or right:
+                i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1, candidates=cand)
+                if i >= 0:
+                    if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                        if i in turns:
+                            turns.remove(i)
+                        elif i in autoturns:
+                            autoturns.remove(i)
+                    elif not(i in turns) and not(i in autoturns):
+                        turns.append(i)
+                turns = track.fill_kerbs_holes(turns)
+
+def events_track(events, mouse_rel):
+    cat = e_cat.get_value()
+    if cat and not cat == "Track":
+        return
+    for e in events:
+        if e.type == pygame.MOUSEMOTION:
+            if pygame.mouse.get_pressed()[0]: #Drag point
+                track.mark_refresh()
+                if track.modified_point is None:
+                    i, _ = track.closest_point(e.pos, MAGNET1)
+                    if i >= 0:
+                        track.points[i] = e.pos
+                        i_turn = track.loop.i_track_to_loop(i)
+                        track.centers[i] = track.loop.turns[i_turn].d
+                        track.mark_refresh()
+                        track.modified_point = i
+                    else:
+                        track.modified_point = None
+                else:
+                    track.points[track.modified_point] = e.pos
+                    i_turn = track.loop.i_track_to_loop(track.modified_point)
+                    track.centers[track.modified_point] = track.loop.turns[i_turn].d
+                    track.mark_refresh()
+            else:
+                track.modified_point = None
+                if pygame.mouse.get_pressed()[1]: #shift track
+                    track.mark_refresh()
+                    shift(track.points, *mouse_rel)
+                    shift(track.added_left_land, *mouse_rel)
+                    shift(track.added_right_land, *mouse_rel)
+        elif e.type == pygame.MOUSEBUTTONDOWN:
+            if e.button == 3: #right click
+                track.mark_refresh()
+                i, coord = track.closest_point(e.pos, MAGNET1, track.left_lane)
+                raw_i = track.refs[i]
+                track.points.insert(raw_i, coord)
+                track.centers.insert(raw_i, None)
+                track.loop = rad.Loop(track.points, track.centers)
+        elif e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_x:
+                i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1)
+                if i >= 0:
+                    track.points.pop(i)
+                track.refresh_if_needed(force=True)
 
 clock = pygame.time.Clock()
 playing = True
@@ -1136,99 +1251,34 @@ while playing:
         if e.type == pygame.QUIT:
             playing = False
             print("Stop playing")
-        if e_edit.get_rect_with_children().collidepoint(pygame.mouse.get_pos()):
-            continue
-        if e.type == pygame.MOUSEMOTION:
-            if pygame.mouse.get_pressed()[0]:
-                track.mark_refresh()
-                if track.modified_point is not None:
-                    track.points[track.modified_point] = e.pos
-                else:
-                    i, _ = track.closest_point(e.pos, MAGNET1)
-                    if i >= 0:
-                        track.points[i] = e.pos
-                        track.modified_point = i
-                    else:
-                        track.modified_point = None
-            else:
-                track.modified_point = None
-                if pygame.mouse.get_pressed()[1]: #shift track
-                    track.mark_refresh()
-                    for i in range(len(track.points)):
-                        track.points[i] = (track.points[i][0]+mouse_rel[0], track.points[i][1]+mouse_rel[1])
-        elif e.type == pygame.MOUSEBUTTONDOWN:
-            if e.button == 3: #right click
-                track.mark_refresh()
-                i, coord, kind = track.get_raw_or_spline_point(e.pos)
-                if kind == "raw":
-                    track.points.append(e.pos)
-                elif kind == "spline":
-                    next_i = track.remontada_spline(i)
-                    if next_i >= 0:
-                        print("Insert point at index", next_i, coord)
-                        track.points.insert(next_i, coord)
-                elif len(track.points) < 4:
-                    print("add moar")
-                    track.points.append(e.pos)
-            # elif e.button == 4 or e.button == 5:  # Mouse wheel up
-            #     if e.button == 4:
-            #         zoom = 1.1
-            #     else:
-            #         zoom = 1 / 1.1
-            #     for i in range(len(track.points)):
-            #         track.points[i] = (track.points[i][0]*zoom, track.points[i][1]*zoom)
-            #     track.width *= zoom
-            #     e_width.set_value(track.width)
-            #     track.width = e_width.get_value()
-            #     track.mark_refresh()
         elif e.type == pygame.KEYDOWN:
-            # track.mark_refresh()
-            if e.key == pygame.K_SPACE:
-                # track.close_loop = not track.close_loop
-                if pygame.constants.KMOD_CTRL & pygame.key.get_mods():
-                    track.added_left_land.append(pygame.mouse.get_pos())
-                else:
-                    track.added_right_land.append(pygame.mouse.get_pos())
-
-            elif e.key == pygame.K_a or e.key == pygame.K_d:
-                i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1)
-                if i >= 0:
-                    if e.key == pygame.K_a:
-                        j = (i-1)%len(track.points)
-                        insert_index = i
-                    else:
-                        j = (i+1)%len(track.points)
-                        insert_index = (i+1)%len(track.points)
-                    new_pos = V2(track.points[j]) + (V2(track.points[i]) - V2(track.points[j]))/2
-                    # print(track.points[i], track.points[j], new_pos)
-                    track.points.insert(insert_index, tuple(new_pos))
-            elif e.key == pygame.K_x:
-                i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1)
-                if i >= 0:
-                    track.points.pop(i)
-                track.refresh_if_needed(force=True)
-            elif e.key == pygame.K_t:
-                i, _ = track.closest_point(pygame.mouse.get_pos(), float("inf"), candidates=track.left_lane)
-                x_elevation = i / len(track.left_lane)
-                track.insert_profile_point(x_elevation, track.profile_L)
-                track.insert_profile_point(x_elevation, track.profile_R)
-            elif e.key == pygame.K_s:
+            if e.key == pygame.K_s:
                 if pygame.key.get_mods() & pygame.KMOD_CTRL:
                     track.save_to_disk(track.fn)
-            # elif e.key == pygame.K_p:
-                # screen.fill((0,0,0))
-                # draw_only_track()
-    # my_stuff() #do your stuff with display
+                    t = tp.Text("Project saved as "+track.fn, 30)
+                    t.center_on(screen)
+                    t.draw()
+                    pygame.display.flip()
+                    tp.pause()
+                    # t.launch_alone(func_before=lambda:screen.fill((255,255,255)) and pygame.display.flip())
+    a = e_edit.get_rect_with_children().collidepoint(pygame.mouse.get_pos())
+    b = e_cat.get_rect_with_children().collidepoint(pygame.mouse.get_pos())
+    iprof = draw_all()
+    if not(a or b):
+        events_track(events, mouse_rel)
+        events_terrain(events, mouse_rel, iprof)
+        events_kerb(events, mouse_rel)
     #update Thorpy elements and draw them
-    updater.update(my_stuff, events=events,
+    updater.update(update_all, events=events,
                    mouse_rel=mouse_rel) #if you dont give a mouse_rel, Thorpy will call pygame mouse_rel() !
     # e_all.update(mouse_rel)
     pygame.display.flip()
 pygame.quit()
 
-#TODO: wheel ==> altitude
+
+#TODO: AMELIORER ERGONOMIE RADIUS SET
+#TODO: IO
+
 #TODO: material dirty asphalt, water, sand
-#TODO: slippery zones
 #TODO: basic meshes placement, as well as start, etc
-#TODO: enregistrer valeurs sliders manquantes ainsi que added land points
 #TODO: working zoom (pas toucher a track width, vraiment histoire de camera)
