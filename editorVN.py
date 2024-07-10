@@ -194,9 +194,10 @@ def smooth_profile(profile, num:int) -> list[tuple[float,float]]:
         q = V2(track.left_lane[i-1])
         tot_dist += p.distance_to(q)
         i_to_dist.append(tot_dist)
+    #3. Interpolate
     new_x = []
     new_y = []
-    for i in range(num): TODO: fusion with above loop
+    for i in range(num): #TODO: fusion with above loop
         fraction = i_to_dist[i]/tot_dist
         if fraction == 1:
             new_x.append(1.)
@@ -212,12 +213,7 @@ def smooth_profile(profile, num:int) -> list[tuple[float,float]]:
                 break
         else:
             assert False, f"{fraction}, {i}, {tot_dist}, {x}, {j}->{k}"
-    # import matplotlib.pyplot as plt
-    # plt.plot(new_x, new_y, "--")
-    # plt.plot(x,y,"o")
-    # plt.show()
     return list(zip(new_x, new_y))
-
 
 
 class Track:
@@ -269,16 +265,16 @@ class Track:
         root = tk.Tk()
         root.withdraw()
         if not fn:
-            fn = filedialog.asksaveasfilename(title="Choose a project", filetypes=[("Track files", "*.track")])
+            fn = filedialog.asksaveasfilename(title="Choose a project", filetypes=[("Track files", "*.track2")])
         if fn:
-            if not fn.endswith(".track"):
-                fn += ".track"
+            if not fn.endswith(".track2"):
+                fn += ".track2"
             self.fn = fn
             fn = os.path.basename(self.fn)
             print(fn)
             e_filename.set_text(fn, adapt_parent=False)
             attributes = ["points", "added_turns_L", "added_turns_R", "profile_L", "profile_R",
-                          "close_loop", "width", "params", "added_left_land", "added_right_land"]
+                          "close_loop", "width", "params", "added_left_land", "added_right_land", "centers"]
             self.params = [
                 e_avg_land.get_value(),
                 e_width_land.get_value(),
@@ -297,8 +293,6 @@ class Track:
                 e_kerb_h0.get_value(),
                 e_kerb_w.get_value(),
                 e_kerb_h.get_value(),
-                e_spline_s.get_value(),
-                e_spline_k.get_value(),
             ]
             data_to_save = {attr: getattr(self, attr) for attr in attributes}
             with open(fn, 'wb') as f:
@@ -310,7 +304,7 @@ class Track:
         if not fn:
             root = tk.Tk()
             root.withdraw()
-            fn = filedialog.askopenfilename(title="Choose a project", filetypes=[("Track files", "*.track")])
+            fn = filedialog.askopenfilename(title="Choose a project", filetypes=[("Track files", "*.track2")])
             self.fn = fn
         with open(fn, 'rb') as f:
             data_loaded = pickle.load(f)
@@ -335,15 +329,15 @@ class Track:
             e_kerb_h0.set_value(self.params[14])
             e_kerb_w.set_value(self.params[15])
             e_kerb_h.set_value(self.params[16])
-            e_spline_s.set_value(self.params[17])
-            e_spline_k.set_value(self.params[18])
             old_format = False
         except:
             print("Old file format, some parameters may not be loaded")
             old_format = True
         fn = os.path.basename(fn)
         e_filename.set_text(fn+"\n(compatibility mode)"*old_format)
-        self.refresh_if_needed(force=True)
+        # self.refresh_if_needed(force=True)
+        self.refresh_if_needed()
+        self.mark_refresh()
             
     def insert_profile_point(self, x, profile):
         for i in range(len(profile)-1):
@@ -805,30 +799,7 @@ def draw_all():
     track_mode = e_cat.get_value() == "Track"
     screen.fill((255,255,255))
     ######
-    mp = pygame.mouse.get_pos()
     track.loop = rad.Loop(track.points, track.centers)
-    if pygame.key.get_pressed()[pygame.K_SPACE]:
-        i, coord = track.closest_point(mp, 400)
-        if i >= 0:
-            assert len(track.points) == len(track.loop.turns)
-            i_turn = track.loop.i_track_to_loop(i)
-            # i_turn = (i-1)%len(track.points)
-            turn = track.loop.turns[i_turn]
-            v = V2(mp) - turn.q()
-            w = turn.bissec(400) - turn.q()
-            if w.length_squared() < 1e-6:
-                w = turn.s1.delta.rotate(90)
-            mouse_proj = v.project(w)
-            point_on_bissec = turn.q() + mouse_proj
-            #
-            turn.compute_c(point_on_bissec)
-            # print(turn.s1.ar.distance_squared_to(turn.s1.br), turn.s2.ar.distance_squared_to(turn.s2.br) )
-            d1 = (turn.s1.ar-turn.s1.br).length()
-            d2 = (turn.s2.ar-turn.s2.br).length()
-            # print(d1,d2)
-            # if d1 > 10 and d2 > 10:
-            track.centers[i] = turn.d
-            track.mark_refresh()
     # else:
         # print("turn 0 5", track.loop.turns[5].d, track.loop.turns[5].c)
     # ################# ASPHALT AND LAND ###########################
@@ -1234,6 +1205,39 @@ def events_track(events, mouse_rel):
                 track.points.insert(raw_i, coord)
                 track.centers.insert(raw_i, None)
                 track.loop = rad.Loop(track.points, track.centers)
+            #check wheel mouse
+            if e.button == 4 or e.button == 5:
+                mp = pygame.mouse.get_pos()
+                i, coord = track.closest_point(mp, MAGNET1)
+                if i >= 0:
+                    assert len(track.points) == len(track.loop.turns)
+                    i_turn = track.loop.i_track_to_loop(i)
+                    turn = track.loop.turns[i_turn]
+                    backup_d = turn.d
+                    #if ctrl is pressed:
+                    if pygame.key.get_mods() & pygame.KMOD_CTRL:
+                        delta_d = 1
+                    else:
+                        delta_d = 10
+                    if e.button == 4:
+                        delta_d *= -1
+                    turn.d += delta_d
+                    if turn.d < 0:
+                        turn.d = 0
+                    # v = V2(mp) - turn.q()
+                    # w = turn.bissec(1000) - turn.q()
+                    # if w.length_squared() < 1e-6:
+                    #     w = turn.s1.delta.rotate(90)
+                    # mouse_proj = v.project(w)
+                    # point_on_bissec = turn.q() + mouse_proj
+                    # #
+                    turn.compute_c(turn.bissec(turn.d))
+                    d1 = (turn.s1.ar-turn.s1.br).length()
+                    d2 = (turn.s2.ar-turn.s2.br).length()
+                    if d1 <= 0 or d2 <= 0:
+                        turn.compute_c(turn.bissec(backup_d))
+                    track.centers[i] = turn.d
+                    track.mark_refresh()
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_x:
                 i, _ = track.closest_point(pygame.mouse.get_pos(), MAGNET1)
